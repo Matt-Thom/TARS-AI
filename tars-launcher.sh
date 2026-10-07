@@ -5,7 +5,7 @@ source "$DIR/src/.venv/bin/activate"
 
 # Allow Python to bind privileged ports (<1024) without running as root
 PYTHON_BIN="$(readlink -f "$(which python3)")"
-sudo setcap 'cap_net_bind_service=+ep' "$PYTHON_BIN" 2>/dev/null
+sudo -n setcap 'cap_net_bind_service=+ep' "$PYTHON_BIN" 2>/dev/null || true
 
 # Reboot mode to kill old process and relaunch
 # Usage: tars-launcher.sh --reboot <old_pid> <python> <app.py> [args...]
