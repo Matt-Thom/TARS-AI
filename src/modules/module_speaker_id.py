@@ -510,13 +510,20 @@ class SpeakerIDManager:
             audio_data, sample_rate = audio_item
             self._process_utterance(audio_data, sample_rate)
 
+    def has_named_speakers(self) -> bool:
+        """Return True if at least one named (non-Unknown_) speaker is enrolled."""
+        if not self.enabled or self._manager is None:
+            return False
+        return any(not s.startswith("Unknown_") for s in self.get_enrolled_speakers())
+
     def wait_for_identification(self, timeout: float = 2.0) -> bool:
         """Block until the background observer finishes identifying the current utterance.
 
         Returns True if identification completed within timeout, False if it timed out.
-        Call this just before reading current_speaker in the ROUND log so the result
-        is always for the current utterance, not the previous one.
+        If no named speakers are enrolled, returns False immediately without blocking.
         """
+        if not self.has_named_speakers():
+            return False
         return self._identification_done.wait(timeout=timeout)
 
     def _process_utterance(self, audio_float32: np.ndarray, sample_rate: int):

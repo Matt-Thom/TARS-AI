@@ -1015,9 +1015,6 @@ class WakeWordSystem:
                 if self.model.meta:
                     f1 = self.model.meta.get("f1_score", 0)
                     meta_info = f", f1={f1:.1%}"
-                    # ONNX model was trained on clean synthetic TTS audio.
-                    # Real mic audio scores higher, so bump the threshold.
-                    self.threshold = min(self.threshold + 0.25, 0.95)
                 print(f"INFO: Loaded universal ONNX model ({size_kb:.0f}KB{meta_info}, threshold={self.threshold:.2f})")
                 return True
             except Exception as e:

@@ -177,6 +177,7 @@ class STTManager:
         self.silence_threshold_margin = None
         self.MAX_RECORDING_FRAMES = 100   # ~12.5 seconds
         self.MAX_SILENT_FRAMES = CONFIG['STT']['speechdelay']
+        self.enable_preemptive = CONFIG.get('STT', {}).get('enable_preemptive', 'False').strip().lower() in ('true', '1', 'yes')
 
         # Callbacks
         self.wake_word_callback: Optional[Callable[[str], None]] = None
@@ -1240,8 +1241,8 @@ class STTManager:
                             preemptive_transcript[0] = None
                             preemptive_fired = False
 
-                # Kick off speculative transcription on first silence after speech
-                if (detected_speech and silent_frames >= 3 and speech_frames >= MIN_SPEECH
+                # Kick off speculative transcription on first silence after speech (if enabled)
+                if (self.enable_preemptive and detected_speech and silent_frames >= 3 and speech_frames >= MIN_SPEECH
                         and spec_thread is None and audio_chunks):
                     spec_snapshot_len = len(audio_chunks)
                     spec_thread = threading.Thread(
@@ -1249,8 +1250,8 @@ class STTManager:
                     )
                     spec_thread.start()
 
-                # Check if speculative transcript is ready and fire preemptive LLM
-                if (spec_thread is not None and not preemptive_fired
+                # Check if speculative transcript is ready and fire preemptive LLM (if enabled)
+                if (self.enable_preemptive and spec_thread is not None and not preemptive_fired
                         and self.preemptive_llm_callback is not None
                         and spec_result[0] is not None
                         and self._looks_like_complete_sentence(spec_result[0])):
@@ -1280,12 +1281,12 @@ class STTManager:
 
         # Check if speculative transcription covers all audio
         if spec_thread is not None and spec_snapshot_len == len(audio_chunks):
-            spec_thread.join(timeout=5)
+            spec_thread.join(timeout=3)
             transcript = spec_result[0]
         else:
             # More audio came after the snapshot — do a full transcription
             if spec_thread is not None:
-                spec_thread.join(timeout=5)  # Wait for it to finish to avoid concurrent native calls
+                spec_thread.join(timeout=3)  # Wait for it to finish to avoid concurrent native calls
             transcript = self._sherpa_transcribe_audio(audio_chunks, RATE)
 
         if not transcript:
@@ -1296,10 +1297,14 @@ class STTManager:
         audio_duration = len(audio_chunks) * 4000 / RATE
         queue_message(f"DEBUG: Transcribed: '{transcript}' (speech={speech_frames}, chunks={len(audio_chunks)}, ~{audio_duration:.1f}s audio)")
 
-        # Check if preemptive LLM result is valid (transcript matches)
+        def _norm_text(t):
+            return re.sub(r'[^\w\s]', '', t or '').strip().lower()
+
+        # Check if preemptive LLM result is valid (normalized transcript matches)
         extra = None
-        if preemptive_fired and preemptive_transcript[0] == transcript and preemptive_thread is not None:
-            preemptive_thread.join(timeout=10)
+        if (preemptive_fired and _norm_text(preemptive_transcript[0]) == _norm_text(transcript)
+                and preemptive_thread is not None):
+            preemptive_thread.join(timeout=5)
             if preemptive_result[0] is not None:
                 extra = {"preemptive_llm_result": preemptive_result[0]}
                 queue_message("INFO: Using preemptive LLM result (transcript matched)")
@@ -1308,12 +1313,12 @@ class STTManager:
         elif preemptive_fired:
             queue_message("INFO: Preemptive LLM discarded (transcript changed)")
 
-        # Always wait for preemptive thread to finish before proceeding to
-        # _emit_result → utterance_callback.  Both the preemptive and main
-        # LLM calls use the same _reply_chunk_callback global, so they must
-        # not run concurrently or chunks from both streams will be interleaved.
-        if preemptive_thread_ref[0] is not None:
-            preemptive_thread_ref[0].join(timeout=10)
+        # If preemptive thread ran, wait briefly if matched; never freeze the turn if discarded
+        if preemptive_thread_ref[0] is not None and preemptive_thread_ref[0].is_alive():
+            if extra is not None:
+                preemptive_thread_ref[0].join(timeout=3)
+            else:
+                preemptive_thread_ref[0].join(timeout=0.05)
             preemptive_thread_ref[0] = None
 
         return self._emit_result(transcript, extra)
