@@ -573,7 +573,7 @@ def load_config():
 
 def get_api_key(llm_backend: str) -> str:
     backend_to_env_var = {
-        "gemini": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+        "gemini": ["GEMINI_API_KEY", "GOOGLE_API_KEY", "OTHER_API_KEY"],
         "anthropic": ["ANTHROPIC_API_KEY"],
         "grok": ["GROK_API_KEY", "XAI_API_KEY"],
         "openai": ["OPENAI_API_KEY"],
