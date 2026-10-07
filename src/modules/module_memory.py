@@ -546,7 +546,11 @@ class MemoryManager:
         return self.hyper_db.embedding_function([query])[0]
 
     def get_related_memories(self, query: str, include_context: bool = True) -> List[Dict[str, Any]]:
-        self.ui_manager.think()
+        if self.ui_manager:
+            try:
+                self.ui_manager.think()
+            except Exception:
+                pass
 
         try:
             documents = self.hyper_db.documents
@@ -894,12 +898,12 @@ class MemoryManager:
     def token_count(self, text: str) -> dict:
         llm_backend = self.config['LLM']['llm_backend']
 
-        if llm_backend == "grok":
+        if llm_backend in ["grok", "anthropic"]:
             word_count = len(text.split())
             estimated_tokens = int(word_count / 0.75)
             return {"length": estimated_tokens}
 
-        elif llm_backend in ["openai", "deepinfra", "other"]:
+        elif llm_backend in ["openai", "deepinfra", "other", "gemini", "ollama"]:
             try:
                 enc = self._get_tiktoken_encoder()
                 return {"length": len(enc.encode(text))}
@@ -907,8 +911,9 @@ class MemoryManager:
                 if not hasattr(self, '_token_error_logged'):
                     queue_message(f"ERROR: Failed to calculate tokens using tiktoken: {e}")
                     self._token_error_logged = True
-                return {"length": 0}
+                word_count = len(text.split())
+                return {"length": int(word_count / 0.75)}
 
         else:
-            queue_message(f"ERROR: Unsupported LLM backend: {llm_backend}")
-            return {"length": 0}
+            word_count = len(text.split())
+            return {"length": int(word_count / 0.75)}
