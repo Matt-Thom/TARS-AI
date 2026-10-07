@@ -433,11 +433,14 @@ def load_config():
             "traits": persona_traits,
         },
         "LLM": {
-            "llm_backend": config['LLM']['llm_backend'],
-            "base_url": config['LLM']['base_url'],
-            "openai_model": config['LLM']['openai_model'],
+            "llm_backend": config.get('LLM', 'llm_backend', fallback='gemini'),
+            "base_url": config.get('LLM', 'base_url', fallback='https://generativelanguage.googleapis.com/v1beta/openai'),
+            "gemini_model": config.get('LLM', 'gemini_model', fallback='gemini-3.8-flash'),
+            "anthropic_model": config.get('LLM', 'anthropic_model', fallback='claude-sonnet-5.5'),
+            "grok_model": config.get('LLM', 'grok_model', fallback='grok-4.7'),
+            "ollama_model": config.get('LLM', 'ollama_model', fallback='llama3.1:8b'),
+            "openai_model": config.get('LLM', 'openai_model', fallback='gpt-4o-mini'),
             "other_model": config.get('LLM', 'other_model', fallback=''),
-            "grok_model": config['LLM']['grok_model'],
             "systemprompt": config['LLM']['systemprompt'],
             "contextsize": int(config['LLM']['contextsize']),
             "max_tokens": int(config['LLM']['max_tokens']),
@@ -446,7 +449,7 @@ def load_config():
             "top_p": float(config['LLM']['top_p']),
             "json_mode": config.getboolean('LLM', 'json_mode', fallback=True),
             "override_encoding_model": config['LLM']['override_encoding_model'],
-            "api_key": get_api_key(config['LLM']['llm_backend']),
+            "api_key": get_api_key(config.get('LLM', 'llm_backend', fallback='gemini')),
         },
         "VISION": {
             "enabled": config.getboolean('VISION', 'enabled'),
@@ -570,19 +573,26 @@ def load_config():
 
 def get_api_key(llm_backend: str) -> str:
     backend_to_env_var = {
-        "openai": "OPENAI_API_KEY",
-        "grok": "GROK_API_KEY",
-        "deepinfra": "DEEPINFRA_API_KEY",
-        "other": "OTHER_API_KEY"
+        "gemini": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+        "anthropic": ["ANTHROPIC_API_KEY"],
+        "grok": ["GROK_API_KEY", "XAI_API_KEY"],
+        "openai": ["OPENAI_API_KEY"],
+        "deepinfra": ["DEEPINFRA_API_KEY"],
+        "ollama": ["OLLAMA_API_KEY", "OTHER_API_KEY"],
+        "other": ["OTHER_API_KEY"]
     }
     if llm_backend not in backend_to_env_var:
         print(f"WARNING: Unsupported LLM backend '{llm_backend}', skipping API key lookup.")
         return ""
-    api_key = os.getenv(backend_to_env_var[llm_backend])
-    if not api_key:
-        print(f"WARNING: No API key found for '{llm_backend}' (env var: {backend_to_env_var[llm_backend]}). LLM features will be unavailable.")
-        return ""
-    return api_key
+    candidates = backend_to_env_var[llm_backend]
+    for env_var in candidates:
+        val = os.getenv(env_var)
+        if val:
+            return val
+    if llm_backend == "ollama":
+        return "ollama"  # Local Ollama does not require an API key
+    print(f"WARNING: No API key found for '{llm_backend}' (env var: {' or '.join(candidates)}). LLM features will be unavailable.")
+    return ""
 
 
 _persona_cache = None       # cached persona traits dict
@@ -674,32 +684,48 @@ CONFIG_METADATA = {
         '__description__': 'Configure the AI brain that generates TARS responses',
         'llm_backend': {
             'label': 'AI Backend',
-            'options': ['openai', 'grok', 'deepinfra', 'other'],
-            'description': 'Choose which AI service TARS uses to generate responses. "openai" uses OpenAI (GPT models) — auto-fills the URL, requires OPENAI_API_KEY in .env. "grok" uses xAI\'s Grok — auto-fills the URL, requires XAI_API_KEY in .env. "deepinfra" uses DeepInfra (cheap hosted models) — auto-fills the URL, requires DEEPINFRA_API_KEY in .env. "other" is for any OpenAI-compatible API — you set the URL yourself and it is preserved when switching backends. Use "other" for Featherless.ai, Ollama (local), LM Studio (local), OpenRouter, or any self-hosted model server. Switching backends auto-updates the URL field except for "other", which always restores your saved URL.'
+            'options': ['gemini', 'anthropic', 'grok', 'ollama', 'openai', 'deepinfra', 'other'],
+            'description': 'Choose which AI service TARS uses to generate responses. "gemini" uses Google Gemini (Gemini 3.8 Flash, fast and multimodal) — requires GEMINI_API_KEY in .env. "anthropic" uses Claude (Sonnet 5.5) — requires ANTHROPIC_API_KEY in .env. "grok" uses xAI\'s Grok (Grok 4.7) — requires GROK_API_KEY in .env. "ollama" uses your local Ollama server. "openai" uses OpenAI (GPT models) — requires OPENAI_API_KEY. "deepinfra" uses DeepInfra — requires DEEPINFRA_API_KEY. "other" is for custom OpenAI-compatible endpoints.'
         },
         'base_url': {
             'label': 'Base URL',
-            'depends_on': [{'field': 'llm_backend', 'values': ['other']}],
-            'description': 'The API endpoint for your AI service. For the "other" backend, set your server address here (e.g. http://192.168.1.100:11434/v1 for Ollama, or https://api.featherless.ai/v1 for Featherless). For "openai", "grok", and "deepinfra" this is handled automatically.'
+            'depends_on': [{'field': 'llm_backend', 'values': ['other', 'ollama']}],
+            'description': 'The API endpoint for your AI service. For "ollama", defaults to http://localhost:11434/v1. For "gemini", "anthropic", "grok", "openai", and "deepinfra" this is handled automatically.'
+        },
+        'gemini_model': {
+            'label': 'Gemini Model',
+            'depends_on': [{'field': 'llm_backend', 'values': ['gemini']}],
+            'description': 'The Google Gemini model identifier (e.g. "gemini-3.8-flash", "gemini-2.5-flash", "gemini-2.5-pro").'
+        },
+        'anthropic_model': {
+            'label': 'Anthropic Model',
+            'depends_on': [{'field': 'llm_backend', 'values': ['anthropic']}],
+            'description': 'The Anthropic Claude model identifier (e.g. "claude-sonnet-5.5", "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022").'
+        },
+        'grok_model': {
+            'label': 'Grok Model',
+            'depends_on': [{'field': 'llm_backend', 'values': ['grok']}],
+            'description': 'The Grok model to use when your backend is set to "grok" (e.g. "grok-4.7", "grok-4-1-fast-non-reasoning").'
+        },
+        'ollama_model': {
+            'label': 'Ollama Model',
+            'depends_on': [{'field': 'llm_backend', 'values': ['ollama']}],
+            'description': 'The local Ollama model to use (e.g. "llama3.1:8b", "qwen2.5:7b"). Make sure you have pulled this model with "ollama pull <model>".'
         },
         'openai_model': {
-            'label': 'model',
+            'label': 'OpenAI Model',
             'depends_on': [{'field': 'llm_backend', 'values': ['openai', 'deepinfra']}],
-            'description': 'The model identifier sent to the OpenAI or DeepInfra API. For OpenAI: "gpt-4o-mini" is the cheapest capable model (good default), "gpt-4o" is more powerful but costs more per request, "o1-mini" is a reasoning model good for complex questions. For DeepInfra: use the full model path like "meta-llama/Meta-Llama-3.1-70B-Instruct". If you type a model name that does not exist, the API will return an error - check the provider dashboard for a list of available models.'
+            'description': 'The model identifier sent to the OpenAI or DeepInfra API (e.g. "gpt-4o-mini", "gpt-4o").'
         },
         'other_model': {
-            'label': 'model',
+            'label': 'Custom Model',
             'depends_on': [{'field': 'llm_backend', 'values': ['other']}],
-            'description': 'The model identifier sent to your custom OpenAI-compatible endpoint. The exact format depends on the service you are using. Featherless.ai: use the full HuggingFace path like "meta-llama/Meta-Llama-3.1-8B-Instruct". Ollama: use just the model name you pulled, like "llama3.1:8b" or "qwen2.5:3b". LM Studio: use the model name shown in the app. OpenRouter: use the provider/model format like "mistralai/mistral-7b-instruct". If you get a 404 or "model not found" error, check that the model name exactly matches what your server expects.'
+            'description': 'The model identifier sent to your custom OpenAI-compatible endpoint.'
         },
         'json_mode': {
             'label': 'JSON Mode',
-            'depends_on': [{'field': 'llm_backend', 'values': ['other']}],
-            'description': 'When ON, TARS tells the AI to respond in structured JSON format using the API\'s response_format parameter. Turn OFF if your backend doesn\'t support it (like LM Studio or Ollama) — you\'ll see a 400 Bad Request error if unsupported. TARS will still work without it since the system prompt already asks for JSON, but responses may occasionally need more repair. OpenAI, Grok, and DeepInfra always use JSON mode regardless of this setting.'
-        },
-        'grok_model': {
-            'depends_on': [{'field': 'llm_backend', 'values': ['grok']}],
-            'description': 'The Grok model to use when your backend is set to "grok". Current options: "grok-4-1-fast-non-reasoning" is the fastest option and works well for casual conversation. "grok-4-1-fast-reasoning" is a reasoning model that thinks through problems step-by-step (slower but better for complex questions). "grok-3-mini" is a smaller, cheaper model. Check xAI docs for the latest available model names as new ones are added regularly.'
+            'depends_on': [{'field': 'llm_backend', 'values': ['other', 'ollama']}],
+            'description': 'When ON, TARS tells the AI to respond in structured JSON format using the API\'s response_format parameter. Turn OFF if your backend doesn\'t support it.'
         },
         'systemprompt': {
             'description': 'Hidden instructions that TARS reads before every conversation. This tells the AI HOW to behave in general - like being helpful, conversational, staying in character, etc. This is different from the character card: the character card defines WHO TARS is, while this prompt defines the general RULES for how it should respond. Most people can leave the default as-is.'
@@ -977,23 +1003,23 @@ CONFIG_METADATA = {
         'vision_processor': {
             'label': 'Vision Processor',
             'depends_on': [{'field': 'enabled', 'values': ['True', 'true']}],
-            'options': ['blip', 'llm', 'openai', 'external'],
-            'description': 'How TARS processes images. "blip" runs a local AI model on your Pi (~1GB RAM) and generates a short caption. "llm" sends the image to your configured LLM backend (must support vision). "openai" sends the image to OpenAI GPT-4o-mini (requires OPENAI_API_KEY). "external" sends the image to an external BLIP server you run on another computer. "external" sends the image to a TARS app-server instance (uses EXTERNAL_API_KEY from .env).'
+            'options': ['gemini', 'llm', 'blip', 'openai', 'external'],
+            'description': 'How TARS processes images. "gemini" uses Google Gemini (Gemini 3.8 Flash, fast and cheap vision). "llm" sends the image to your configured LLM backend. "blip" runs a local AI model on your Pi. "openai" sends the image to OpenAI GPT-4o-mini. "external" sends the image to an external server.'
         },
         'use_llm_backend': {
             'label': 'Use Same as LLM',
-            'depends_on': [{'field': 'enabled', 'values': ['True', 'true']}, {'field': 'vision_processor', 'values': ['openai', 'llm']}],
+            'depends_on': [{'field': 'enabled', 'values': ['True', 'true']}, {'field': 'vision_processor', 'values': ['gemini', 'openai', 'llm']}],
             'description': 'When ON, vision uses the same model and API settings as your main LLM backend. Turn OFF to configure a separate model and URL for vision processing.'
         },
         'base_url': {
             'label': 'Vision API URL',
-            'depends_on': [{'field': 'enabled', 'values': ['True', 'true']}, {'field': 'use_llm_backend', 'values': ['False', 'false']}, {'field': 'vision_processor', 'values': ['external', 'openai', 'llm']}],
-            'description': 'The API base URL for vision processing. For server_hosted: the BLIP server (e.g. http://192.168.1.100:5678). For llm/openai: the API endpoint (e.g. https://api.openai.com). Leave blank to use the default for your provider.'
+            'depends_on': [{'field': 'enabled', 'values': ['True', 'true']}, {'field': 'use_llm_backend', 'values': ['False', 'false']}, {'field': 'vision_processor', 'values': ['gemini', 'external', 'openai', 'llm']}],
+            'description': 'The API base URL for vision processing. For gemini: https://generativelanguage.googleapis.com/v1beta/openai. For server_hosted: the BLIP server. Leave blank to use provider default.'
         },
         'vision_model': {
             'label': 'Vision Model',
-            'depends_on': [{'field': 'enabled', 'values': ['True', 'true']}, {'field': 'use_llm_backend', 'values': ['False', 'false']}, {'field': 'vision_processor', 'values': ['openai', 'llm']}],
-            'description': 'The model name for vision. For OpenAI, defaults to gpt-4o-mini if blank.'
+            'depends_on': [{'field': 'enabled', 'values': ['True', 'true']}, {'field': 'use_llm_backend', 'values': ['False', 'false']}, {'field': 'vision_processor', 'values': ['gemini', 'openai', 'llm']}],
+            'description': 'The model name for vision. For Gemini: gemini-3.8-flash (default). For OpenAI: gpt-4o-mini.'
         },
         'vision_max_tokens': {
             'label': 'Vision Max Tokens',

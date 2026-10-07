@@ -123,10 +123,16 @@ def _get_vision_settings():
         # Use main LLM settings
         api_key = CONFIG['LLM']['api_key']
         base_url = CONFIG['LLM']['base_url']
-        if llm_backend == "deepinfra":
-            model = CONFIG['LLM']['openai_model']
+        if llm_backend == "gemini":
+            model = CONFIG['LLM'].get('gemini_model', 'gemini-3.8-flash')
+        elif llm_backend == "anthropic":
+            model = CONFIG['LLM'].get('anthropic_model', 'claude-sonnet-5.5')
         elif llm_backend == "grok":
-            model = CONFIG['LLM']['grok_model']
+            model = CONFIG['LLM'].get('grok_model', 'grok-4.7')
+        elif llm_backend == "ollama":
+            model = CONFIG['LLM'].get('ollama_model', 'llama3.1:8b')
+        elif llm_backend == "deepinfra":
+            model = CONFIG['LLM']['openai_model']
         elif llm_backend == "openai":
             model = CONFIG['LLM']['openai_model']
         else:
@@ -138,10 +144,16 @@ def _get_vision_settings():
         model = CONFIG['VISION'].get('vision_model', '')
         if not model:
             # Fall back to LLM model
-            if llm_backend == "openai":
-                model = CONFIG['LLM']['openai_model']
+            if llm_backend == "gemini":
+                model = CONFIG['LLM'].get('gemini_model', 'gemini-3.8-flash')
+            elif llm_backend == "anthropic":
+                model = CONFIG['LLM'].get('anthropic_model', 'claude-sonnet-5.5')
             elif llm_backend == "grok":
-                model = CONFIG['LLM']['grok_model']
+                model = CONFIG['LLM'].get('grok_model', 'grok-4.7')
+            elif llm_backend == "ollama":
+                model = CONFIG['LLM'].get('ollama_model', 'llama3.1:8b')
+            elif llm_backend == "openai":
+                model = CONFIG['LLM']['openai_model']
             elif llm_backend == "deepinfra":
                 model = CONFIG['LLM']['openai_model']
             else:
@@ -159,13 +171,37 @@ def _describe_llm(image_data, prompt):
         return "Error: No base_url configured for vision"
     max_tokens = int(CONFIG['VISION'].get('vision_max_tokens', 150))
     llm_backend = CONFIG['LLM']['llm_backend']
+    b64 = _to_base64(image_data)
+
+    if llm_backend == "anthropic":
+        url = f"{base_url.rstrip('/')}/v1/messages" if (base_url and base_url != "https://api.anthropic.com") else "https://api.anthropic.com/v1/messages"
+        headers = {
+            "Content-Type": "application/json",
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01"
+        }
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}},
+                {"type": "text", "text": prompt}
+            ]}],
+            "max_tokens": max_tokens
+        }
+        response = requests.post(url, headers=headers, json=payload, timeout=30)
+        response.raise_for_status()
+        res_json = response.json()
+        description = ''.join([part.get('text', '') for part in res_json.get('content', []) if part.get('type') == 'text'])
+        queue_message(f"Vision (Anthropic): {description}")
+        return description
 
     if llm_backend == "deepinfra":
         url = f"{base_url}/v1/openai/chat/completions"
+    elif llm_backend == "gemini":
+        url = f"{base_url.rstrip('/')}/chat/completions"
     else:
         url = f"{base_url}/v1/chat/completions"
 
-    b64 = _to_base64(image_data)
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
     payload = {
         "model": model,
@@ -179,6 +215,41 @@ def _describe_llm(image_data, prompt):
     response.raise_for_status()
     description = response.json()['choices'][0]['message']['content']
     queue_message(f"Vision: {description}")
+    return description
+
+
+def _describe_gemini(image_data, prompt):
+    """Send image to Google Gemini vision API."""
+    use_llm = CONFIG['VISION'].get('use_llm_backend', True)
+    if use_llm and CONFIG['LLM']['llm_backend'] == 'gemini':
+        api_key = CONFIG['LLM']['api_key']
+        vision_base = CONFIG['LLM']['base_url']
+        model = CONFIG['LLM'].get('gemini_model', 'gemini-3.8-flash')
+    else:
+        api_key = os.environ.get('GEMINI_API_KEY') or os.environ.get('GOOGLE_API_KEY') or os.environ.get('VISION_API_KEY') or CONFIG['LLM']['api_key']
+        vision_base = CONFIG['VISION'].get('base_url', '') or 'https://generativelanguage.googleapis.com/v1beta/openai'
+        model = CONFIG['VISION'].get('vision_model', '') or 'gemini-3.8-flash'
+
+    if not api_key:
+        return "Error: No API key available for Gemini vision (set GEMINI_API_KEY or GOOGLE_API_KEY in .env)"
+
+    api_url = f"{vision_base.rstrip('/')}/chat/completions"
+    max_tokens = int(CONFIG['VISION'].get('vision_max_tokens', 150))
+    b64 = _to_base64(image_data)
+
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": [
+            {"type": "text", "text": prompt},
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
+        ]}],
+        "max_tokens": max_tokens
+    }
+    response = requests.post(api_url, headers=headers, json=payload, timeout=30)
+    response.raise_for_status()
+    description = response.json()['choices'][0]['message']['content']
+    queue_message(f"Vision (Gemini): {description}")
     return description
 
 
@@ -237,6 +308,7 @@ def _describe_server(image_data, prompt):
 
 # Backend dispatch table
 _BACKENDS = {
+    "gemini": _describe_gemini,
     "blip": _describe_blip,
     "llm": _describe_llm,
     "openai": _describe_openai,

@@ -27,14 +27,20 @@ enable_thinking_responses = false
 thinking_responses = ["Let me think...","soooo.....","soo....","Let's seeee...","Let me seeee...","Let's see.....","One Moment...","One Moment","hum","humm","Analyzing...","Processing...","Calculating...","Computing...","Running the numbers...","Checking...","One moment...","Scanning data...","Assessing...","Evaluating...","Let me calculate...","Working on it...","Just a moment...","Reviewing...","Compiling...","Cross-referencing...","Thinking it through...","Give me a second...","Hold on..."]
 
 [LLM]
-# AI backend: openai | grok | deepinfra | other
-llm_backend = other
-# API endpoint URL (used when llm_backend = other)
-base_url = https://api.featherless.ai
-# Model name for openai / deepinfra backend (e.g., gpt-4o-mini)
-openai_model = gpt-4o-mini
+# AI backend: gemini | anthropic | grok | ollama | openai | deepinfra | other
+llm_backend = gemini
+# API endpoint URL (auto-configured for known backends, or custom for ollama/other)
+base_url = https://generativelanguage.googleapis.com/v1beta/openai
+# Model name for gemini backend
+gemini_model = gemini-3.8-flash
+# Model name for anthropic backend
+anthropic_model = claude-sonnet-5.5
 # Model name for grok backend
-grok_model = grok-4-1-fast-non-reasoning
+grok_model = grok-4.7
+# Model name for ollama backend
+ollama_model = llama3.1:8b
+# Model name for openai backend
+openai_model = gpt-4o-mini
 # Model name for other (custom) backend
 other_model = meta-llama/Meta-Llama-3.1-8B-Instruct
 # System instructions prepended to every conversation (keep general; personality goes in character card)
@@ -155,19 +161,20 @@ emotion_model = SamLowe/roberta-base-go_emotions-onnx
 enabled = True
 # Camera rotation in degrees: 0, 90, 180, 270
 camera_rotation = 270
-# Vision processor: blip | llm | openai | server_hosted
-# blip = local BLIP model (~1GB RAM), generates short captions passed to LLM
+# Vision processor: gemini | llm | blip | openai | server_hosted
+# gemini = Google Gemini 3.8 Flash (fast, high quality, cheap/generous quota)
 # llm = sends image to your configured LLM backend (requires vision-capable model)
+# blip = local BLIP model (~1GB RAM), generates short captions
 # openai = sends image to OpenAI GPT-4o-mini vision API (requires OPENAI_API_KEY)
 # server_hosted = sends image to external BLIP server (set base_url below)
-vision_processor = blip
+vision_processor = gemini
 # Use the same model/backend as your main LLM (True/False)
 # When True, vision uses your LLM settings. When False, configure separate model below.
 use_llm_backend = True
 # Vision API base URL (only when use_llm_backend = False)
-base_url = http://192.168.1.100:5678
+base_url = https://generativelanguage.googleapis.com/v1beta/openai
 # Model name for vision (only when use_llm_backend = False)
-vision_model =
+vision_model = gemini-3.8-flash
 # Max tokens for vision response
 vision_max_tokens = 150
 

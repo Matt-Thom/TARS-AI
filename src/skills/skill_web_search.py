@@ -99,46 +99,65 @@ def _summarize_search_results(search_results, user_question):
             f"Be concise (2-4 sentences). Just the answer, no JSON, no markdown."
         )
 
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {config['LLM']['api_key']}"
-        }
-
         llm_backend = config['LLM']['llm_backend']
+        base_url = config['LLM'].get('base_url', '').rstrip('/')
 
-        if llm_backend in ["openai", "grok", "deepinfra", "other"]:
-            if llm_backend == 'grok':
-                model_key = 'grok_model'
+        if llm_backend == "anthropic":
+            url = f"{base_url}/v1/messages" if (base_url and base_url != "https://api.anthropic.com") else "https://api.anthropic.com/v1/messages"
+            headers = {
+                "Content-Type": "application/json",
+                "x-api-key": config['LLM']['api_key'],
+                "anthropic-version": "2023-06-01"
+            }
+            data = {
+                "model": config['LLM'].get('anthropic_model', 'claude-sonnet-5.5'),
+                "messages": [{"role": "user", "content": summary_prompt}],
+                "max_tokens": 250,
+                "temperature": 0.7
+            }
+        else:
+            headers = {"Content-Type": "application/json"}
+            api_key = config['LLM'].get('api_key', '')
+            if api_key and api_key != "ollama":
+                headers["Authorization"] = f"Bearer {api_key}"
+
+            if llm_backend == 'gemini':
+                model = config['LLM'].get('gemini_model', 'gemini-3.8-flash')
+                url = f"{base_url}/chat/completions" if base_url else "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+            elif llm_backend == 'grok':
+                model = config['LLM'].get('grok_model', 'grok-4.7')
+                url = f"{base_url}/v1/chat/completions" if base_url else "https://api.x.ai/v1/chat/completions"
+            elif llm_backend == 'ollama':
+                model = config['LLM'].get('ollama_model', 'llama3.1:8b')
+                url = f"{base_url}/chat/completions" if base_url else "http://localhost:11434/v1/chat/completions"
             elif llm_backend == 'deepinfra':
-                model_key = 'deepinfra'
-            elif llm_backend == 'other':
-                model_key = 'other_model'
+                model = config['LLM'].get('openai_model', 'meta-llama/Meta-Llama-3.1-70B-Instruct')
+                url = f"{base_url}/v1/openai/chat/completions" if base_url else "https://api.deepinfra.com/v1/openai/chat/completions"
+            elif llm_backend == 'openai':
+                model = config['LLM'].get('openai_model', 'gpt-4o-mini')
+                url = f"{base_url}/v1/chat/completions" if base_url else "https://api.openai.com/v1/chat/completions"
             else:
-                model_key = 'openai_model'
-            base_url = config['LLM']['base_url']
-
-            if llm_backend == "deepinfra":
-                url = f"{base_url}/v1/openai/chat/completions"
-            else:
+                model = config['LLM'].get('other_model', '')
                 url = f"{base_url}/v1/chat/completions"
 
             data = {
-                "model": config['LLM'][model_key],
+                "model": model,
                 "messages": [
                     {"role": "user", "content": summary_prompt}
                 ],
                 "max_tokens": 250,
                 "temperature": float(config['LLM'].get('temperature', 0.7))
             }
-        else:
-            return None
 
         response = requests.post(url, headers=headers, json=data, timeout=20)
         response.raise_for_status()
 
         result = response.json()
-        if 'choices' in result:
+        text = ""
+        if 'choices' in result and result['choices']:
             text = result['choices'][0]['message']['content'].strip()
+        elif 'content' in result and isinstance(result['content'], list):
+            text = ''.join([p.get('text', '') for p in result['content'] if p.get('type') == 'text']).strip()
 
             if text.startswith('{') and text.endswith('}'):
                 try:

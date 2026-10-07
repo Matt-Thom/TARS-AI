@@ -2272,8 +2272,11 @@ function executeAction() {
   }
 
   const BACKEND_URLS = {
-    'openai':    'https://api.openai.com/',
-    'grok':      'https://api.x.ai/',
+    'gemini':    'https://generativelanguage.googleapis.com/v1beta/openai',
+    'anthropic': 'https://api.anthropic.com',
+    'grok':      'https://api.x.ai',
+    'ollama':    'http://localhost:11434/v1',
+    'openai':    'https://api.openai.com',
     'deepinfra': 'https://api.deepinfra.com/v1/openai',
   };
 

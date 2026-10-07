@@ -178,11 +178,8 @@ def get_completion(user_prompt, istext=True, image_b64=None, source="voice"):
     _maybe_play_thinking_response()
 
     prompt = build_prompt(user_prompt, character_manager, memory_manager, CONFIG, debug=False)
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {CONFIG['LLM']['api_key']}"
-    }
     llm_backend = CONFIG['LLM']['llm_backend']
+    headers = _get_llm_headers(llm_backend)
     url, data = _prepare_request_data(llm_backend, prompt, image_b64=image_b64)
 
     try:
@@ -199,11 +196,11 @@ def get_completion(user_prompt, istext=True, image_b64=None, source="voice"):
                 if not line_str.startswith("data: "):
                     continue
                 data_str = line_str[6:]
-                if data_str.strip() == "[DONE]":
+                if data_str.strip() in ("[DONE]", '{"type": "message_stop"}'):
                     break
                 try:
                     chunk = json.loads(data_str)
-                    token = chunk['choices'][0]['delta'].get('content', '')
+                    token = _extract_token_from_chunk(chunk)
                     if token:
                         _content_parts.append(token)
                 except (json.JSONDecodeError, KeyError, IndexError):
@@ -229,9 +226,70 @@ def get_completion(user_prompt, istext=True, image_b64=None, source="voice"):
         queue_message(f"ERROR: LLM request failed: {e}")
         return None
 
-def _prepare_request_data(llm_backend, prompt, image_b64=None):
+def _get_llm_headers(llm_backend):
+    """Build request headers for the selected LLM backend."""
+    api_key = CONFIG['LLM'].get('api_key', '')
+    if llm_backend == "anthropic":
+        return {
+            "Content-Type": "application/json",
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01"
+        }
+    elif llm_backend == "ollama":
+        headers = {"Content-Type": "application/json"}
+        if api_key and api_key != "ollama":
+            headers["Authorization"] = f"Bearer {api_key}"
+        return headers
+    else:
+        return {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}"
+        }
 
-    # Build user content — multimodal if image provided, plain text otherwise
+def _extract_token_from_chunk(chunk):
+    """Extract token string from SSE chunk, supporting both OpenAI and Anthropic schemas."""
+    if 'choices' in chunk and chunk['choices']:
+        delta = chunk['choices'][0].get('delta', {})
+        return delta.get('content', '')
+    if 'delta' in chunk and isinstance(chunk['delta'], dict):
+        return chunk['delta'].get('text', '')
+    return ''
+
+def _prepare_request_data(llm_backend, prompt, image_b64=None):
+    base_url = CONFIG['LLM'].get('base_url', '').rstrip('/')
+
+    if llm_backend == "anthropic":
+        url = f"{base_url}/v1/messages" if (base_url and base_url != "https://api.anthropic.com") else "https://api.anthropic.com/v1/messages"
+        model = CONFIG['LLM'].get('anthropic_model', 'claude-sonnet-5.5')
+        if image_b64:
+            user_content = [
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/jpeg",
+                        "data": image_b64
+                    }
+                },
+                {"type": "text", "text": prompt}
+            ]
+        else:
+            user_content = prompt
+
+        temp = float(CONFIG['LLM'].get('temperature', 0.8))
+        data = {
+            "model": model,
+            "system": CONFIG['LLM']['systemprompt'],
+            "messages": [
+                {"role": "user", "content": user_content}
+            ],
+            "max_tokens": int(CONFIG['LLM']['max_tokens']),
+            "temperature": min(max(temp, 0.0), 1.0),
+            "stream": True
+        }
+        return url, data
+
+    # All OpenAI-compatible backends (Gemini, Grok, Ollama, OpenAI, DeepInfra, Other)
     if image_b64:
         user_content = [
             {"type": "text", "text": prompt},
@@ -240,18 +298,24 @@ def _prepare_request_data(llm_backend, prompt, image_b64=None):
     else:
         user_content = prompt
 
-    if llm_backend == "openai":
-        url = f"{CONFIG['LLM']['base_url']}/v1/chat/completions"
-        model = CONFIG['LLM']['openai_model']
+    if llm_backend == "gemini":
+        url = f"{base_url}/chat/completions" if base_url else "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+        model = CONFIG['LLM'].get('gemini_model', 'gemini-3.8-flash')
     elif llm_backend == "grok":
-        url = f"{CONFIG['LLM']['base_url']}/v1/chat/completions"
-        model = CONFIG['LLM']['grok_model']
+        url = f"{base_url}/v1/chat/completions" if base_url else "https://api.x.ai/v1/chat/completions"
+        model = CONFIG['LLM'].get('grok_model', 'grok-4.7')
+    elif llm_backend == "ollama":
+        url = f"{base_url}/chat/completions" if base_url else "http://localhost:11434/v1/chat/completions"
+        model = CONFIG['LLM'].get('ollama_model', 'llama3.1:8b')
+    elif llm_backend == "openai":
+        url = f"{base_url}/v1/chat/completions" if base_url else "https://api.openai.com/v1/chat/completions"
+        model = CONFIG['LLM'].get('openai_model', 'gpt-4o-mini')
     elif llm_backend == "deepinfra":
-        url = f"{CONFIG['LLM']['base_url']}/v1/openai/chat/completions"
-        model = CONFIG['LLM']['openai_model']
+        url = f"{base_url}/v1/openai/chat/completions" if base_url else "https://api.deepinfra.com/v1/openai/chat/completions"
+        model = CONFIG['LLM'].get('openai_model', 'meta-llama/Meta-Llama-3.1-70B-Instruct')
     else:
-        url = f"{CONFIG['LLM']['base_url']}/v1/chat/completions"
-        model = CONFIG['LLM']['other_model']
+        url = f"{base_url}/v1/chat/completions" if base_url else "http://localhost:11434/v1/chat/completions"
+        model = CONFIG['LLM'].get('other_model', '')
 
     data = {
         "model": model,
@@ -259,31 +323,31 @@ def _prepare_request_data(llm_backend, prompt, image_b64=None):
             {"role": "system", "content": CONFIG['LLM']['systemprompt']},
             {"role": "user", "content": user_content}
         ],
-        "max_tokens": CONFIG['LLM']['max_tokens'],
-        "temperature": CONFIG['LLM']['temperature'],
-        "top_p": CONFIG['LLM']['top_p'],
+        "max_tokens": int(CONFIG['LLM']['max_tokens']),
+        "temperature": float(CONFIG['LLM']['temperature']),
+        "top_p": float(CONFIG['LLM']['top_p']),
         "stream": True
     }
 
-    if llm_backend in ["openai", "grok", "deepinfra"]:
+    if llm_backend in ["openai", "grok", "deepinfra", "gemini"]:
         data["response_format"] = {"type": "json_object"}
     else:
         if CONFIG['LLM'].get('json_mode', True):
-            data["response_format"] = {"type": "json_object"}  
+            data["response_format"] = {"type": "json_object"}
 
     return url, data
 
 def _extract_text(response_json, istext):
     try:
-        llm_backend = CONFIG['LLM']['llm_backend']
-        if 'choices' in response_json:
-            return (
-                response_json['choices'][0]['message']['content']
-                if llm_backend in ["openai", "grok", "deepinfra", "other"]
-                else response_json['choices'][0]['text']
-            ).strip()
+        if 'choices' in response_json and response_json['choices']:
+            msg = response_json['choices'][0].get('message', {})
+            content = msg.get('content', '') if 'content' in msg else response_json['choices'][0].get('text', '')
+            return content.strip() if content else ""
+        elif 'content' in response_json and isinstance(response_json['content'], list):
+            text_parts = [part.get('text', '') for part in response_json['content'] if part.get('type') == 'text']
+            return ''.join(text_parts).strip()
         else:
-            raise KeyError("Invalid response format: 'choices' key not found.")
+            raise KeyError("Invalid response format: neither 'choices' nor 'content' found.")
     except (KeyError, IndexError, TypeError) as error:
         return f"Text extraction failed: {str(error)}"
 
@@ -304,11 +368,8 @@ def process_completion(prompt, image_b64=None):
         built_prompt = build_prompt(prompt, character_manager, memory_manager, CONFIG, debug=False)
         _t_prompt = time.perf_counter()
 
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {CONFIG['LLM']['api_key']}"
-        }
         llm_backend = CONFIG['LLM']['llm_backend']
+        headers = _get_llm_headers(llm_backend)
         url, data = _prepare_request_data(llm_backend, built_prompt, image_b64=image_b64)
 
         response = _http_session.post(url, headers=headers, json=data, stream=True)
@@ -326,11 +387,11 @@ def process_completion(prompt, image_b64=None):
                 if not line_str.startswith("data: "):
                     continue
                 data_str = line_str[6:]
-                if data_str.strip() == "[DONE]":
+                if data_str.strip() in ("[DONE]", '{"type": "message_stop"}'):
                     break
                 try:
                     chunk = json.loads(data_str)
-                    token = chunk['choices'][0]['delta'].get('content', '')
+                    token = _extract_token_from_chunk(chunk)
                     if not token:
                         continue
                     if _t_first_byte is None:
