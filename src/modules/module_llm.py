@@ -255,7 +255,7 @@ def _extract_token_from_chunk(chunk):
         return chunk['delta'].get('text', '')
     return ''
 
-def _prepare_request_data(llm_backend, prompt, image_b64=None):
+def _prepare_request_data(llm_backend, prompt, image_b64=None, stream=True, json_mode=True):
     base_url = CONFIG['LLM'].get('base_url', '').rstrip('/')
 
     if llm_backend == "anthropic":
@@ -285,7 +285,7 @@ def _prepare_request_data(llm_backend, prompt, image_b64=None):
             ],
             "max_tokens": int(CONFIG['LLM']['max_tokens']),
             "temperature": min(max(temp, 0.0), 1.0),
-            "stream": True
+            "stream": stream
         }
         return url, data
 
@@ -326,13 +326,13 @@ def _prepare_request_data(llm_backend, prompt, image_b64=None):
         "max_tokens": int(CONFIG['LLM']['max_tokens']),
         "temperature": float(CONFIG['LLM']['temperature']),
         "top_p": float(CONFIG['LLM']['top_p']),
-        "stream": True
+        "stream": stream
     }
 
-    if llm_backend in ["openai", "grok", "deepinfra", "gemini"]:
-        data["response_format"] = {"type": "json_object"}
-    else:
-        if CONFIG['LLM'].get('json_mode', True):
+    if json_mode:
+        if llm_backend in ["openai", "grok", "deepinfra", "gemini"]:
+            data["response_format"] = {"type": "json_object"}
+        elif CONFIG['LLM'].get('json_mode', True):
             data["response_format"] = {"type": "json_object"}
 
     return url, data
@@ -845,12 +845,9 @@ def execute_function_call(func_call, bot_response, user_input, source="voice", h
 
 
 def raw_complete_llm(user_prompt, istext=True):
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {CONFIG['LLM']['api_key']}"
-    }
     llm_backend = CONFIG['LLM']['llm_backend']
-    url, data = _prepare_request_data(llm_backend, user_prompt)
+    headers = _get_llm_headers(llm_backend)
+    url, data = _prepare_request_data(llm_backend, user_prompt, stream=False, json_mode=False)
 
     try:
         response = _http_session.post(url, headers=headers, json=data)
