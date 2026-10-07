@@ -38,6 +38,8 @@ class CameraModule:
         self.lock = threading.Lock()
         self.first_frame_captured = False
         self.last_saved_image = None
+        self.thread = None
+        self.picam2 = None
 
         if self.use_camera_module:
             from picamera2 import Picamera2
@@ -229,7 +231,10 @@ class CameraModule:
 
     def stop(self):
         self.running = False
-        if self.thread and self.thread.is_alive():
+        if getattr(self, 'thread', None) and self.thread.is_alive():
             self.thread.join()
-        if self.use_camera_module and self.picam2:
-            self.picam2.stop()
+        if getattr(self, 'use_camera_module', False) and getattr(self, 'picam2', None):
+            try:
+                self.picam2.stop()
+            except Exception:
+                pass
