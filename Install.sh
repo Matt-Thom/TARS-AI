@@ -686,7 +686,7 @@ HEAVY
 PyOpenGL                        # OpenGL support
 PyOpenGL-accelerate             # OpenGL acceleration
 picamera2                       # PI camera module
-opencv-python                   # Video classes and modifiers
+opencv-python<5                 # Video classes and modifiers
 simplejpeg                      # Camera Requirement
 numpy==2.1                      # Needed for image rotations
 moviepy                         # Video editing and playback support
